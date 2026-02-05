@@ -209,9 +209,7 @@ def extract_freeze_durations(log_file):
 def detect_algorithm(name):
     """Detect algorithm type from log name."""
     name_lower = name.lower()
-    if 'ratio' in name_lower:
-        return 'Ratio'
-    elif 'gbr' in name_lower:
+    if 'ratio' in name_lower or 'gbr' in name_lower:
         return 'GBR'
     elif 'gcc' in name_lower:
         return 'GCC'
@@ -220,7 +218,7 @@ def detect_algorithm(name):
 
 def plot_freeze_analysis(log_files, output_path='freeze_analysis.png'):
     """Plot freeze duration CDF (by algorithm) and freeze rate bar chart."""
-    algo_colors = {'GCC': 'red', 'GBR': 'blue', 'Ratio': 'green', 'Unknown': 'gray'}
+    algo_colors = {'GCC': 'red', 'GBR': 'blue', 'Unknown': 'gray'}
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
@@ -254,7 +252,7 @@ def plot_freeze_analysis(log_files, output_path='freeze_analysis.png'):
     # Left plot: Freeze duration CDF by algorithm
     ax1 = axes[0]
     has_data = False
-    for algo in ['GCC', 'GBR', 'Ratio', 'Unknown']:
+    for algo in ['GCC', 'GBR', 'Unknown']:
         if algo in algo_freeze_durations and algo_freeze_durations[algo]:
             durations = algo_freeze_durations[algo]
             sorted_data = np.sort(durations)
