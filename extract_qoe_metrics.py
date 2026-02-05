@@ -3,8 +3,11 @@
 Extract QoE metrics (E2E delay, freeze rate) from WebRTC receiver logs.
 
 Usage:
-    python extract_qoe_metrics.py <log_file>
-    python extract_qoe_metrics.py <log_dir> --all
+    python extract_qoe_metrics.py <log_file>              # Analyze single file
+    python extract_qoe_metrics.py <log_file> --cdf       # Generate CDF plot
+    python extract_qoe_metrics.py <log1> <log2> --cdf    # Compare multiple logs CDF
+    python extract_qoe_metrics.py <log_dir>              # Analyze all logs in dir
+    python extract_qoe_metrics.py <log_file> --json      # Output JSON
 """
 
 import re
@@ -13,6 +16,10 @@ import os
 import json
 import numpy as np
 from pathlib import Path
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 def parse_timing_breakdown(log_file):
     """Parse TIMING-BREAKDOWN lines from log file."""
@@ -146,10 +153,101 @@ def print_results(results):
     if results['bitrate_mbps']:
         print(f"\nBitrate: {results['bitrate_mbps']:.2f} Mbps")
 
+def plot_e2e_cdf(log_files, output_path='e2e_delay_cdf.png'):
+    """Plot E2E delay CDF for multiple log files."""
+    colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
+
+    plt.figure(figsize=(10, 6))
+
+    for i, log_file in enumerate(log_files):
+        timings = parse_timing_breakdown(log_file)
+        e2e = timings['e2e']
+
+        if not e2e:
+            print(f"Warning: No E2E data in {log_file}")
+            continue
+
+        sorted_data = np.sort(e2e)
+        cdf = np.arange(1, len(sorted_data) + 1) / len(sorted_data)
+
+        name = Path(log_file).stem.replace('_receiver_cloud', '')
+        color = colors[i % len(colors)]
+
+        plt.plot(sorted_data, cdf, color=color, linewidth=2,
+                 label=f'{name} (mean={np.mean(e2e):.1f}ms)')
+
+    plt.xlabel('E2E Delay (ms)', fontsize=12)
+    plt.ylabel('CDF', fontsize=12)
+    plt.title('E2E Delay CDF Comparison', fontsize=14)
+    plt.legend(fontsize=10)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    print(f"CDF plot saved: {output_path}")
+
+    return output_path
+
+def plot_delay_breakdown_cdf(log_file, output_path=None):
+    """Plot CDF for all delay components of a single log file."""
+    timings = parse_timing_breakdown(log_file)
+
+    if not output_path:
+        name = Path(log_file).stem.replace('_receiver_cloud', '')
+        output_path = f'{name}_delay_breakdown_cdf.png'
+
+    components = ['e2e', 'encode', 'pacer', 'network', 'jitter_buf', 'packet_buf', 'frame_buf', 'decode']
+    colors = ['black', 'blue', 'cyan', 'green', 'red', 'orange', 'magenta', 'purple']
+
+    plt.figure(figsize=(12, 6))
+
+    for comp, color in zip(components, colors):
+        data = timings[comp]
+        if not data:
+            continue
+
+        sorted_data = np.sort(data)
+        cdf = np.arange(1, len(sorted_data) + 1) / len(sorted_data)
+
+        linewidth = 2.5 if comp == 'e2e' else 1.5
+        linestyle = '-' if comp in ['e2e', 'jitter_buf', 'network'] else '--'
+
+        plt.plot(sorted_data, cdf, color=color, linewidth=linewidth, linestyle=linestyle,
+                 label=f'{comp} (mean={np.mean(data):.1f}ms)')
+
+    plt.xlabel('Delay (ms)', fontsize=12)
+    plt.ylabel('CDF', fontsize=12)
+    name = Path(log_file).stem.replace('_receiver_cloud', '')
+    plt.title(f'Delay Breakdown CDF: {name}', fontsize=14)
+    plt.legend(fontsize=9, loc='lower right')
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    print(f"Breakdown CDF saved: {output_path}")
+
+    return output_path
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
         sys.exit(1)
+
+    # Check for --cdf flag
+    if '--cdf' in sys.argv:
+        log_files = [f for f in sys.argv[1:] if f != '--cdf' and f.endswith('.log')]
+
+        if len(log_files) == 0:
+            print("Error: No log files specified for CDF")
+            sys.exit(1)
+        elif len(log_files) == 1:
+            # Single file: plot breakdown CDF
+            plot_delay_breakdown_cdf(log_files[0])
+            # Also plot E2E CDF
+            plot_e2e_cdf(log_files)
+        else:
+            # Multiple files: compare E2E CDF
+            plot_e2e_cdf(log_files)
+
+        return
 
     path = sys.argv[1]
 
