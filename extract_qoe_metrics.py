@@ -3,10 +3,11 @@
 Extract QoE metrics (E2E delay, freeze rate) from WebRTC receiver logs.
 
 Usage:
-    python extract_qoe_metrics.py <log_file>              # Analyze single file
-    python extract_qoe_metrics.py <log1> <log2> --cdf    # Compare E2E delay CDF
-    python extract_qoe_metrics.py <log_dir>              # Analyze all logs in dir
-    python extract_qoe_metrics.py <log_file> --json      # Output JSON
+    python extract_qoe_metrics.py <log_file>               # Analyze single file
+    python extract_qoe_metrics.py <log1> <log2> --cdf     # Compare E2E delay CDF
+    python extract_qoe_metrics.py <log1> <log2> --freeze  # Freeze duration CDF + freeze rate bar
+    python extract_qoe_metrics.py <log_dir>               # Analyze all logs in dir
+    python extract_qoe_metrics.py <log_file> --json       # Output JSON
 """
 
 import re
@@ -186,6 +187,91 @@ def plot_e2e_cdf(log_files, output_path='e2e_delay_cdf.png'):
 
     return output_path
 
+def extract_freeze_durations(log_file):
+    """Extract individual freeze durations from cumulative freeze data."""
+    pattern = r'Freeze Count: (\d+).*Total Freeze Duration \(ms\): (\d+)'
+
+    prev_count, prev_dur = 0, 0
+    freeze_durations = []
+
+    with open(log_file, 'r', errors='ignore') as f:
+        for line in f:
+            if 'VideoQuality-CoreFreeze' in line:
+                match = re.search(pattern, line)
+                if match:
+                    count, dur = int(match.group(1)), int(match.group(2))
+                    if count > prev_count:
+                        freeze_durations.append(dur - prev_dur)
+                        prev_count, prev_dur = count, dur
+
+    return freeze_durations
+
+def plot_freeze_analysis(log_files, output_path='freeze_analysis.png'):
+    """Plot freeze duration CDF (aggregated) and freeze rate bar chart."""
+    colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    # Collect data
+    all_freeze_durations = []
+    freeze_rates = []
+    names = []
+
+    for log_file in log_files:
+        name = Path(log_file).stem.replace('_receiver_cloud', '')
+        names.append(name)
+
+        # Get freeze durations
+        durations = extract_freeze_durations(log_file)
+        all_freeze_durations.extend(durations)
+
+        # Get freeze rate
+        freeze_info = parse_freeze_rate(log_file)
+        if freeze_info:
+            freeze_rates.append(freeze_info['rebuffering_ratio'] * 100)
+        else:
+            freeze_rates.append(0)
+
+        print(f"{name}: {len(durations)} freezes, rate={freeze_rates[-1]:.2f}%")
+
+    # Left plot: Freeze duration CDF (aggregated)
+    ax1 = axes[0]
+    if all_freeze_durations:
+        sorted_data = np.sort(all_freeze_durations)
+        cdf = np.arange(1, len(sorted_data) + 1) / len(sorted_data)
+        ax1.plot(sorted_data, cdf, 'b-', linewidth=2,
+                 label=f'All freezes (n={len(all_freeze_durations)}, mean={np.mean(all_freeze_durations):.0f}ms)')
+        ax1.set_xlabel('Freeze Duration (ms)', fontsize=12)
+        ax1.set_ylabel('CDF', fontsize=12)
+        ax1.set_title('Freeze Duration CDF (Aggregated)', fontsize=14)
+        ax1.legend(fontsize=10)
+        ax1.grid(True, alpha=0.3)
+    else:
+        ax1.text(0.5, 0.5, 'No freeze events', ha='center', va='center', fontsize=14)
+        ax1.set_title('Freeze Duration CDF', fontsize=14)
+
+    # Right plot: Freeze rate bar chart
+    ax2 = axes[1]
+    x = np.arange(len(names))
+    bars = ax2.bar(x, freeze_rates, color=colors[:len(names)], alpha=0.8)
+    ax2.set_xlabel('Log', fontsize=12)
+    ax2.set_ylabel('Freeze Rate (%)', fontsize=12)
+    ax2.set_title('Freeze Rate by Log', fontsize=14)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(names, rotation=45, ha='right', fontsize=9)
+    ax2.grid(True, alpha=0.3, axis='y')
+
+    # Add value labels on bars
+    for bar, rate in zip(bars, freeze_rates):
+        ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.05,
+                 f'{rate:.2f}%', ha='center', va='bottom', fontsize=8)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    print(f"\nFreeze analysis saved: {output_path}")
+
+    return output_path
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -193,13 +279,24 @@ def main():
 
     # Check for --cdf flag
     if '--cdf' in sys.argv:
-        log_files = [f for f in sys.argv[1:] if f != '--cdf' and f.endswith('.log')]
+        log_files = [f for f in sys.argv[1:] if f not in ['--cdf', '--freeze', '--json'] and f.endswith('.log')]
 
         if len(log_files) < 2:
             print("Error: Need at least 2 log files for CDF comparison")
             sys.exit(1)
 
         plot_e2e_cdf(log_files)
+        return
+
+    # Check for --freeze flag
+    if '--freeze' in sys.argv:
+        log_files = [f for f in sys.argv[1:] if f not in ['--cdf', '--freeze', '--json'] and f.endswith('.log')]
+
+        if len(log_files) < 1:
+            print("Error: Need at least 1 log file for freeze analysis")
+            sys.exit(1)
+
+        plot_freeze_analysis(log_files)
         return
 
     path = sys.argv[1]
