@@ -206,24 +206,41 @@ def extract_freeze_durations(log_file):
 
     return freeze_durations
 
+def detect_algorithm(name):
+    """Detect algorithm type from log name."""
+    name_lower = name.lower()
+    if 'ratio' in name_lower:
+        return 'Ratio'
+    elif 'gbr' in name_lower:
+        return 'GBR'
+    elif 'gcc' in name_lower:
+        return 'GCC'
+    else:
+        return 'Unknown'
+
 def plot_freeze_analysis(log_files, output_path='freeze_analysis.png'):
-    """Plot freeze duration CDF (aggregated) and freeze rate bar chart."""
-    colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
+    """Plot freeze duration CDF (by algorithm) and freeze rate bar chart."""
+    algo_colors = {'GCC': 'red', 'GBR': 'blue', 'Ratio': 'green', 'Unknown': 'gray'}
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-    # Collect data
-    all_freeze_durations = []
+    # Collect data by algorithm
+    algo_freeze_durations = {}
     freeze_rates = []
     names = []
+    name_colors = []
 
     for log_file in log_files:
         name = Path(log_file).stem.replace('_receiver_cloud', '')
         names.append(name)
+        algo = detect_algorithm(name)
+        name_colors.append(algo_colors[algo])
 
         # Get freeze durations
         durations = extract_freeze_durations(log_file)
-        all_freeze_durations.extend(durations)
+        if algo not in algo_freeze_durations:
+            algo_freeze_durations[algo] = []
+        algo_freeze_durations[algo].extend(durations)
 
         # Get freeze rate
         freeze_info = parse_freeze_rate(log_file)
@@ -232,18 +249,24 @@ def plot_freeze_analysis(log_files, output_path='freeze_analysis.png'):
         else:
             freeze_rates.append(0)
 
-        print(f"{name}: {len(durations)} freezes, rate={freeze_rates[-1]:.2f}%")
+        print(f"{name} ({algo}): {len(durations)} freezes, rate={freeze_rates[-1]:.2f}%")
 
-    # Left plot: Freeze duration CDF (aggregated)
+    # Left plot: Freeze duration CDF by algorithm
     ax1 = axes[0]
-    if all_freeze_durations:
-        sorted_data = np.sort(all_freeze_durations)
-        cdf = np.arange(1, len(sorted_data) + 1) / len(sorted_data)
-        ax1.plot(sorted_data, cdf, 'b-', linewidth=2,
-                 label=f'All freezes (n={len(all_freeze_durations)}, mean={np.mean(all_freeze_durations):.0f}ms)')
+    has_data = False
+    for algo in ['GCC', 'GBR', 'Ratio', 'Unknown']:
+        if algo in algo_freeze_durations and algo_freeze_durations[algo]:
+            durations = algo_freeze_durations[algo]
+            sorted_data = np.sort(durations)
+            cdf = np.arange(1, len(sorted_data) + 1) / len(sorted_data)
+            ax1.plot(sorted_data, cdf, color=algo_colors[algo], linewidth=2,
+                     label=f'{algo} (n={len(durations)}, mean={np.mean(durations):.0f}ms)')
+            has_data = True
+
+    if has_data:
         ax1.set_xlabel('Freeze Duration (ms)', fontsize=12)
         ax1.set_ylabel('CDF', fontsize=12)
-        ax1.set_title('Freeze Duration CDF (Aggregated)', fontsize=14)
+        ax1.set_title('Freeze Duration CDF by Algorithm', fontsize=14)
         ax1.legend(fontsize=10)
         ax1.grid(True, alpha=0.3)
     else:
@@ -253,7 +276,7 @@ def plot_freeze_analysis(log_files, output_path='freeze_analysis.png'):
     # Right plot: Freeze rate bar chart
     ax2 = axes[1]
     x = np.arange(len(names))
-    bars = ax2.bar(x, freeze_rates, color=colors[:len(names)], alpha=0.8)
+    bars = ax2.bar(x, freeze_rates, color=name_colors, alpha=0.8)
     ax2.set_xlabel('Log', fontsize=12)
     ax2.set_ylabel('Freeze Rate (%)', fontsize=12)
     ax2.set_title('Freeze Rate by Log', fontsize=14)
